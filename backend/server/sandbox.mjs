@@ -1,6 +1,6 @@
 import { CommandExitError, Sandbox } from 'e2b';
 
-const maxResultBytes = 4 * 1024 * 1024;
+const maxResultBytes = 16 * 1024 * 1024;
 const languages = new Set(['java', 'csharp', 'python']);
 
 export class TraceError extends Error {
@@ -35,9 +35,11 @@ async function readResult(stream) {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+  const body = Buffer.concat(chunks, size);
   try {
-    const result = JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
-    if (result && (Array.isArray(result.snapshots) || typeof result.error === 'string')) return result;
+    const result = JSON.parse(body.toString('utf8'));
+    // Forward the already-validated bytes instead of serializing all snapshots again.
+    if (result && (Array.isArray(result.snapshots) || typeof result.error === 'string')) return body;
   } catch { /* A failed runner may leave an incomplete result. */ }
   throw new TraceError(422, '실행 결과를 가져오지 못했어요. 코드를 확인해 주세요.');
 }
@@ -55,7 +57,7 @@ export function createSandboxRunner({ template, create = Sandbox.create.bind(San
         allowInternetAccess: false, network: { allowPublicTraffic: false },
       });
       await sandbox.files.write('/home/visiblecode/source', code, options);
-      await sandbox.commands.run(`/bin/sh /opt/visiblecode/runner.sh ${language}`, {
+      await sandbox.commands.run(`/bin/sh /opt/visiblecode/runner.sh ${language} ${maxResultBytes}`, {
         ...options, timeoutMs: 13_000, retainOutput: false,
       });
       return await readResult(await sandbox.files.read('/home/visiblecode/result.json', { ...options, format: 'stream' }));

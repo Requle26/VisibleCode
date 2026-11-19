@@ -368,7 +368,7 @@ public class MemoryTracer {
                 int length = -1;
                 boolean truncated = false;
                 try {
-                    if (object instanceof StringReference string) { kind = "string"; text = string.value(); }
+                    if (object instanceof StringReference string) { kind = "string"; text = stringPreview(string.value()); }
                     else if (object instanceof ArrayReference array) {
                         kind = "array"; length = array.length(); truncated = length > 30;
                         List<Value> values = array.getValues(0, Math.min(length, 30));
@@ -468,6 +468,13 @@ public class MemoryTracer {
         if (process != null && process.isAlive()) process.destroyForcibly();
     }
     private static String simple(String type) { return type.substring(type.lastIndexOf('.') + 1).replace('$', '.'); }
+    private static String stringPreview(String text) {
+        final int limit = 240;
+        if (text.length() <= limit) return text;
+        int end = limit - 1;
+        if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return text.substring(0, end) + "…";
+    }
     private static Map<String, Object> map(Object... pairs) {
         Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < pairs.length; i += 2) map.put((String) pairs[i], pairs[i + 1]);

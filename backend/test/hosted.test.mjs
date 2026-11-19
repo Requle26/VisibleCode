@@ -26,7 +26,7 @@ test('Vercel 프록시가 환경 변수 주소의 인증된 실행 API에만 코
   const base = await listen(t, createHostedApp({ token, runTrace: async input => {
     calls++;
     assert.deepEqual(input, example);
-    return output;
+    return Buffer.from(JSON.stringify(output));
   } }));
   const send = (url, options) => {
     assert.equal(url.href, 'https://visiblecode.example/api/trace');
@@ -41,8 +41,32 @@ test('Vercel 프록시가 환경 변수 주소의 인증된 실행 API에만 코
   assert.equal(calls, 0);
   const response = await proxyTrace(req({ authorization: 'client-input' }), env, send);
   assert.equal(response.status, 200);
-  assert.deepEqual(JSON.parse(response.body), output);
+  assert.deepEqual(await new Response(response.body).json(), output);
   assert.equal(calls, 1);
+});
+
+test('Vercel 프록시는 Render의 4.5MB보다 큰 JSON 응답을 스트림으로 전달한다', async t => {
+  const data = Buffer.from(JSON.stringify({ snapshots: [], output: 'x'.repeat(6 * 1024 * 1024) }));
+  const base = await listen(t, createHostedApp({ token, runTrace: async () => data }));
+  const response = await proxyTrace(req(), env, (url, options) => fetch(`${base}${url.pathname}`, options));
+  assert.equal(response.status, 200);
+  assert.ok(response.body instanceof ReadableStream);
+  assert.deepEqual(Buffer.from(await new Response(response.body).arrayBuffer()), data);
+});
+
+test('Vercel 프록시는 업스트림 응답이 끝나기 전에 첫 조각을 전달한다', async () => {
+  let upstream;
+  const source = new ReadableStream({ start(controller) {
+    upstream = controller;
+    controller.enqueue(new TextEncoder().encode('{"snapshots":'));
+  } });
+  const response = await proxyTrace(req(), env, async () => new Response(source, { headers }));
+  const reader = response.body.getReader();
+  assert.equal(new TextDecoder().decode((await reader.read()).value), '{"snapshots":');
+  upstream.enqueue(new TextEncoder().encode('[]}'));
+  upstream.close();
+  assert.equal(new TextDecoder().decode((await reader.read()).value), '[]}');
+  assert.equal((await reader.read()).done, true);
 });
 
 test('호스팅 API가 동시 실행과 분당 요청을 제한한다', async t => {
@@ -53,7 +77,7 @@ test('호스팅 API가 동시 실행과 분당 요청을 제한한다', async t 
   const base = await listen(t, createHostedApp({ token, concurrency: 1, requestsPerMinute: 1, runTrace: async () => {
     started();
     await waiting;
-    return { snapshots: [] };
+    return Buffer.from('{"snapshots":[]}');
   } }));
   const send = () => fetch(`${base}/api/trace`, {
     method: 'POST', headers: { ...headers, authorization: `Bearer ${token}` }, body: JSON.stringify(example),
@@ -82,17 +106,18 @@ test('실행마다 네트워크를 차단한 샌드박스를 생성하고 잘못
           assert.equal(code, example.code);
           assert.equal(opts.user, 'visiblecode');
         },
-        read: async () => new Response(id === 1 ? '{"snapshots":[]}' : 'invalid result').body,
+        read: async () => new Response(id === 1 ? '{"snapshots":[]}' : id === 2 ? 'invalid result' : Buffer.alloc(16 * 1024 * 1024 + 1)).body,
       },
       commands: { run: async (command, opts) => {
-        assert.match(command, /runner\.sh python$/);
+        assert.match(command, /runner\.sh python 16777216$/);
         assert.equal(opts.user, 'visiblecode');
       } },
       kill: async () => { cleaned.push(id); },
     };
   } });
   const signal = new AbortController().signal;
-  assert.deepEqual(await run(example, signal), { snapshots: [] });
+  assert.deepEqual(JSON.parse(await run(example, signal)), { snapshots: [] });
   await assert.rejects(() => run(example, signal), { status: 422 });
-  assert.deepEqual(cleaned, [1, 2]);
+  await assert.rejects(() => run(example, signal), { status: 422, message: /결과가 너무 길어요/ });
+  assert.deepEqual(cleaned, [1, 2, 3]);
 });

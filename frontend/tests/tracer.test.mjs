@@ -117,6 +117,18 @@ test('Java 표준 라이브러리 예외는 호출한 사용자 코드의 줄을
   assert.equal(result.snapshots.at(-1).line, 3);
 });
 
+test('Java의 긴 문자열은 객체 미리보기만 줄이고 프로그램의 값은 바꾸지 않는다', async () => {
+  const result = await execute(`public class Main {
+    public static void main(String[] args) {
+        String text = "a".repeat(238) + "😀".repeat(1000);
+        System.out.println(text.length());
+    }
+}`);
+  assert.equal(result.output, '2238\n');
+  const preview = result.snapshots.flatMap(snapshot => snapshot.heap).find(object => object.type === 'String' && object.text?.startsWith('aaa'));
+  assert.equal(preview?.text, 'a'.repeat(238) + '…');
+});
+
 test('Java에서 바깥 인스턴스를 사용하는 내부 클래스는 Outer.this 참조가 보인다', async () => {
   const result = await execute(`package sample;
 class Outer {

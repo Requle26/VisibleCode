@@ -1,5 +1,6 @@
 import express from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { finished } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { createSandboxRunner, parseTraceRequest, TraceError } from './sandbox.mjs';
 
@@ -33,8 +34,11 @@ export function createHostedApp({ token, runTrace, concurrency = 2, requestsPerM
     const cancelled = new AbortController();
     res.once('close', () => { if (!res.writableEnded) cancelled.abort(); });
     try {
-      const result = await runTrace(request, cancelled.signal);
-      if (!res.destroyed) res.json(result);
+      const body = await runTrace(request, cancelled.signal);
+      if (!res.destroyed) {
+        res.type('application/json').set('Content-Length', String(body.length)).end(body);
+        await finished(res, { cleanup: true });
+      }
     } finally {
       active--;
     }

@@ -45,6 +45,8 @@ React·TypeScript와 CodeMirror를 사용합니다. Java는 JDI로 실제 JVM �
 
 실행 샌드박스는 요청별로 생성하고 외부 네트워크를 차단하며 종료 후 삭제합니다. Render 인스턴스당 동시 실행과 분당 요청을 제한합니다. 공개 사이트라면 Vercel에서도 `/api/trace`의 요청량 제한을 설정하고 E2B 사용량을 확인하세요. Render 무료 인스턴스가 절전 상태라면 첫 요청은 시간 초과될 수 있습니다.
 
+배포 API는 실행당 최대 16MiB의 추적 결과를 Vercel에서 스트리밍합니다. 기존 배포에 이 변경을 적용할 때는 E2B 템플릿을 먼저 다시 빌드하고, Vercel 프록시와 Render API를 새 커밋으로 배포하세요. 새 템플릿은 이전 Render API의 4MiB 요청도 지원합니다.
+
 ## 검증
 
 ```sh

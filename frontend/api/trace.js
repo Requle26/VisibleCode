@@ -1,5 +1,5 @@
 const maxRequestBytes = 64 * 1024;
-const maxResponseBytes = 4 * 1024 * 1024;
+const maxResponseBytes = 16 * 1024 * 1024;
 const languages = new Set(['java', 'csharp', 'python']);
 
 function backendEndpoint(value) {
@@ -35,6 +35,17 @@ async function readBody(stream, limit) {
   }
 }
 
+function limitResponse(stream) {
+  let size = 0;
+  return stream.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      size += chunk.byteLength;
+      if (size > maxResponseBytes) throw new Error('Trace response exceeded the byte limit');
+      controller.enqueue(chunk);
+    },
+  }));
+}
+
 export async function proxyTrace(req, env = process.env, request = fetch) {
   if (req.method !== 'POST') return failure(405, 'POST 요청만 지원해요.');
   if (req.headers.get('sec-fetch-site') === 'cross-site') return failure(403, 'VisibleCode에서 실행해 주세요.');
@@ -68,8 +79,14 @@ export async function proxyTrace(req, env = process.env, request = fetch) {
       await response.body?.cancel().catch(() => {});
       return failure(502, '실행 서버에 연결할 수 없어요. 설정을 확인해 주세요.');
     }
-    const body = await readBody(response.body, maxResponseBytes);
-    return body ? { status, body } : failure(502, '실행 서버의 응답을 읽을 수 없어요.');
+    if (!response.body) return failure(502, '실행 서버의 응답을 읽을 수 없어요.');
+    const encoding = response.headers.get('content-encoding');
+    if ((!encoding || encoding === 'identity') && Number(response.headers.get('content-length')) > maxResponseBytes) {
+      await response.body.cancel().catch(() => {});
+      return failure(502, '실행 서버의 응답이 너무 길어요.');
+    }
+    // A streamed Response lets Vercel relay large traces without buffering them in the function.
+    return { status, body: limitResponse(response.body) };
   } catch {
     return deadline.aborted ? failure(504, '실행 서버의 응답 시간이 초과됐어요.') : failure(502, '실행 서버에 연결할 수 없어요.');
   }
