@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: visiblecode-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.x
+      - key: TRACE_API_TOKEN
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: E2B_TEMPLATE
+        sync: false

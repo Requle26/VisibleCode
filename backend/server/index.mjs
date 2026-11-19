@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -15,8 +14,8 @@ await mkdir(runtime, { recursive: true });
 const exec = promisify(execFile);
 const built = new Map();
 const dotnetName = process.platform === 'win32' ? 'dotnet.exe' : 'dotnet';
-const localDotnet = path.join(runtime, 'dotnet', dotnetName);
-const dotnet = process.env.DOTNET_BIN || (existsSync(localDotnet) ? localDotnet : dotnetName);
+const localDotnet = [runtime, path.join(root, '..', '.runtime')].map(dir => path.join(dir, 'dotnet', dotnetName)).find(existsSync);
+const dotnet = process.env.DOTNET_BIN || localDotnet || dotnetName;
 const dotnetEnv = { ...process.env, DOTNET_NOLOGO: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' };
 const python = process.env.PYTHON_BIN || 'python3';
 const names = { java: 'Java', csharp: 'C#', python: 'Python' };
@@ -54,7 +53,8 @@ const server = createServer(app);
 app.use((req, res, next) => {
   const host = req.get('host') || '';
   const origin = req.get('origin');
-  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host) || (origin && origin !== `http://${host}`)) {
+  const allowedOrigins = new Set([`http://${host}`, 'http://localhost:5173', 'http://127.0.0.1:5173']);
+  if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host) || (origin && !allowedOrigins.has(origin))) {
     return res.status(403).json({ error: '로컬 Memory Studio에서만 실행할 수 있어요.' });
   }
   next();
@@ -112,12 +112,5 @@ app.use('/api', (error, _req, res, _next) => {
   res.status(error.status === 413 ? 413 : 400).json({ error: error.status === 413 ? '코드가 너무 길어요. 짧은 예제로 다시 실행해 주세요.' : '코드를 읽을 수 없어요.' });
 });
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(root, 'dist')));
-  app.get('/{*path}', (_req, res) => res.sendFile(path.join(root, 'dist/index.html')));
-} else {
-  const vite = await createViteServer({ root, server: { middlewareMode: true, hmr: { server } }, appType: 'spa' });
-  app.use(vite.middlewares);
-}
-const port = Number(process.env.PORT || 5173);
+const port = Number(process.env.PORT || 8787);
 server.listen(port, '127.0.0.1', () => console.log(`Memory Studio → http://localhost:${server.address().port}`));

@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
 
 let child;
 let base;
 before(async () => {
-  child = spawn(process.execPath, ['server/index.mjs'], { env: { ...process.env, PORT: '0', NODE_ENV: 'development' } });
+  child = spawn(process.execPath, [fileURLToPath(new URL('../../backend/server/index.mjs', import.meta.url))], { env: { ...process.env, PORT: '0' } });
   child.stderr.pipe(process.stderr);
   const [chunk] = await Promise.race([
     once(child.stdout, 'data'),
@@ -140,7 +141,7 @@ class Main {
 });
 
 const pythonAvailable = spawnSync(process.env.PYTHON_BIN || 'python3', ['--version']).status === 0;
-const localDotnet = path.resolve('.runtime', 'dotnet', process.platform === 'win32' ? 'dotnet.exe' : 'dotnet');
+const localDotnet = path.resolve('../.runtime', 'dotnet', process.platform === 'win32' ? 'dotnet.exe' : 'dotnet');
 const sdk = spawnSync(process.env.DOTNET_BIN || (existsSync(localDotnet) ? localDotnet : 'dotnet'), ['--list-sdks'], { encoding: 'utf8' });
 const csharpAvailable = [...(sdk.stdout ?? '').matchAll(/^(\d+)\./gm)].some(([_, version]) => Number(version) >= 8);
 
