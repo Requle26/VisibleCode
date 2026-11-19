@@ -119,6 +119,9 @@ function MemoryCard({ id, data }: NodeProps<MemoryNode>) {
       {data.badge && <span className="node-badge" title={python ? objectIdHint(data.badge) : undefined}>{python ? `ID ${data.badge}` : data.badge}</span>}
       {data.value && <Value field={data.value} />}
     </div>
+    {data.declarations?.map(({ text, group, abstract }, index) => <div className={`node-field node-declaration ${group}`} key={index}>
+      <span title={text}>{text}</span>{abstract && <span className="abstract-method-tag">추상</span>}
+    </div>)}
     {data.fields?.map((field, index) => <div className="node-field" key={`${field.item.name}-${index}`}>
       <span title={field.item.name}>{data.moduleGlobals ? JSON.stringify(field.item.name) : field.item.name}</span><Value field={field} choose={data.choose} />
       <Handle type="source" id={`field-${index}-right`} position={Position.Right} isConnectable={false} className={port(`field-${index}-right`)} />

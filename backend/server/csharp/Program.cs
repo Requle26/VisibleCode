@@ -18,6 +18,17 @@ var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Sp
 var original = CSharpCompilation.Create("MemoryStudioUser", [syntax, globals], references,
     new CSharpCompilationOptions(OutputKind.ConsoleApplication, nullableContextOptions: NullableContextOptions.Enable));
 var originalErrors = original.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+if (originalErrors.Length > 0 && originalErrors.All(d => d.Id == "CS5001"))
+{
+    var library = original.WithOptions(original.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
+    var declarations = Instrumentation.CollectDeclarations(library.GetSemanticModel(syntax));
+    if (declarations.Length > 0)
+    {
+        Write(new { snapshots = new[] { new { structureOnly = true, line = 0, executedLine = 0, frames = Array.Empty<object>(),
+            heap = Array.Empty<object>(), classes = declarations, output = "", finished = false } } });
+        return;
+    }
+}
 if (originalErrors.Length > 0)
 {
     Write(new { error = "C# 컴파일 오류가 있어요.", diagnostics = originalErrors.Take(15).Select(d => new {
@@ -229,6 +240,39 @@ sealed class Instrumentation(SemanticModel model) : CSharpSyntaxRewriter
                 baseType.ToDisplayString(DisplayType), baseType.TypeKind == TypeKind.Interface ? "interface" : "class")).ToArray();
         }
         return result;
+    }
+
+    internal static object[] CollectDeclarations(SemanticModel model)
+    {
+        var bases = CollectTypeBases(model);
+        var fieldsFormat = DisplayType.WithMemberOptions(SymbolDisplayMemberOptions.IncludeAccessibility
+            | SymbolDisplayMemberOptions.IncludeModifiers | SymbolDisplayMemberOptions.IncludeType);
+        var methodsFormat = fieldsFormat.WithMemberOptions(fieldsFormat.MemberOptions | SymbolDisplayMemberOptions.IncludeParameters)
+            .WithParameterOptions(SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeName
+                | SymbolDisplayParameterOptions.IncludeParamsRefOut);
+        var seen = new HashSet<string>();
+        return model.SyntaxTree.GetRoot().DescendantNodes().OfType<BaseTypeDeclarationSyntax>()
+            .Select(declaration => model.GetDeclaredSymbol(declaration)).OfType<INamedTypeSymbol>()
+            .Where(type => seen.Add(TypeId(type))).Take(30).Select(type => {
+                var entries = type.GetMembers().OfType<IMethodSymbol>()
+                    .Where(method => !method.IsImplicitlyDeclared && method.MethodKind is (MethodKind.Constructor
+                        or MethodKind.StaticConstructor or MethodKind.Ordinary or MethodKind.ExplicitInterfaceImplementation))
+                    .Select(method => (Name: method.ToDisplayString(methodsFormat), Abstract: method.IsAbstract))
+                    .Concat(type.GetMembers().OfType<IPropertySymbol>().Where(property => !property.IsImplicitlyDeclared)
+                        .Select(property => (Name: property.ToDisplayString(fieldsFormat) + " { "
+                            + (property.GetMethod != null ? "get; " : "") + (property.SetMethod != null ? "set; " : "") + "}", Abstract: property.IsAbstract)))
+                    .Take(35).ToArray();
+                var id = TypeId(type);
+                return (object)new {
+                    id, name = type.ToDisplayString(DisplayType), kind = type.TypeKind == TypeKind.Interface ? "interface" : "class",
+                    @abstract = type.TypeKind == TypeKind.Class && type.IsAbstract && !type.IsStatic,
+                    bases = bases.GetValueOrDefault(id) ?? [], fields = Array.Empty<object>(),
+                    declaredFields = type.GetMembers().OfType<IFieldSymbol>().Where(field => !field.IsImplicitlyDeclared).Take(30)
+                        .Select(field => field.ToDisplayString(fieldsFormat)).ToArray(),
+                    methods = entries.Select(entry => entry.Name).ToArray(),
+                    abstractMethods = entries.Where(entry => entry.Abstract).Select(entry => entry.Name).ToArray(),
+                };
+            }).ToArray();
     }
 
     private StatementSyntax Capture(SyntaxNode target, bool after, int position, int? displayLine = null, IMethodSymbol? ownerMethod = null)

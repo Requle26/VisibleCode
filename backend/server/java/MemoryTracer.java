@@ -90,8 +90,8 @@ public class MemoryTracer {
             var units = compilation.parse();
             compilation.analyze();
             if (diagnostics.getDiagnostics().stream().noneMatch(d -> d.getKind() == Diagnostic.Kind.ERROR)) {
-                collectTypeDefinitions(compilation, units);
-                compilation.generate();
+                collectTypeDefinitions(compilation, units, entryClasses.isEmpty());
+                if (!entryClasses.isEmpty()) compilation.generate();
             }
             if (diagnostics.getDiagnostics().stream().anyMatch(d -> d.getKind() == Diagnostic.Kind.ERROR)) {
                 result.put("error", "컴파일 오류가 있어요. 아래 내용을 확인해 주세요.");
@@ -101,7 +101,11 @@ public class MemoryTracer {
                 return;
             }
         }
-        if (entryClasses.isEmpty()) { result.put("error", "실행을 시작할 public static void main(String[] args) 메서드가 필요합니다."); return; }
+        if (entryClasses.isEmpty()) {
+            result.put("snapshots", List.of(map("structureOnly", true, "line", 0, "executedLine", 0, "frames", List.of(),
+                "heap", List.of(), "classes", new ArrayList<>(typeDefinitions.values()), "output", "", "finished", false)));
+            return;
+        }
         String mainClass = packageName + (entryClasses.contains(fileClass) ? fileClass : entryClasses.iterator().next());
         try (var files = Files.walk(dir)) {
             files.filter(p -> p.toString().endsWith(".class")).forEach(p -> {
@@ -252,7 +256,7 @@ public class MemoryTracer {
         return type.toString().equals("String") || type.toString().equals("java.lang.String");
     }
 
-    private void collectTypeDefinitions(JavacTask task, Iterable<? extends CompilationUnitTree> units) {
+    private void collectTypeDefinitions(JavacTask task, Iterable<? extends CompilationUnitTree> units, boolean structureOnly) {
         var trees = Trees.instance(task);
         var elements = task.getElements();
         var types = task.getTypes();
@@ -260,7 +264,7 @@ public class MemoryTracer {
             @Override public Void visitClass(ClassTree tree, Void context) {
                 if (trees.getElement(getCurrentPath()) instanceof TypeElement type) {
                     String id = elements.getBinaryName(type).toString();
-                    if (!id.isEmpty()) {
+                    if (!id.isEmpty() && (!structureOnly || !type.getSimpleName().toString().isEmpty()) && (!structureOnly || typeDefinitions.size() < 30)) {
                         List<Object> bases = new ArrayList<>();
                         List<TypeMirror> parents = new ArrayList<>();
                         parents.add(type.getSuperclass());
@@ -275,15 +279,22 @@ public class MemoryTracer {
                         var members = new ArrayList<>(ElementFilter.constructorsIn(type.getEnclosedElements()));
                         members.addAll(ElementFilter.methodsIn(type.getEnclosedElements()));
                         for (var method : members) {
+                            if (structureOnly && methods.size() >= 35) break;
                             String name = method.getSimpleName().contentEquals("<init>") ? simple(id) : method.getSimpleName().toString();
                             String signature = name + "(" + String.join(", ", method.getParameters().stream()
-                                .map(param -> simple(types.erasure(param.asType()).toString())).toList()) + ")";
+                                .map(param -> structureOnly ? param.asType().toString() : simple(types.erasure(param.asType()).toString())).toList()) + ")";
                             methods.add(signature);
                             if (method.getModifiers().contains(Modifier.ABSTRACT)) abstractMethods.add(signature);
                         }
-                        typeDefinitions.put(id, map("id", id, "name", simple(id), "kind", type.getKind().isInterface() ? "interface" : "class",
+                        var definition = map("id", id, "name", structureOnly && !type.getTypeParameters().isEmpty()
+                                ? simple(id) + "<" + String.join(", ", type.getTypeParameters().stream().map(p -> p.getSimpleName().toString()).toList()) + ">" : simple(id),
+                            "kind", type.getKind().isInterface() ? "interface" : "class",
                             "abstract", !type.getKind().isInterface() && type.getModifiers().contains(Modifier.ABSTRACT),
-                            "bases", bases, "fields", List.of(), "methods", methods, "abstractMethods", abstractMethods));
+                            "bases", bases, "fields", List.of(), "methods", methods, "abstractMethods", abstractMethods);
+                        if (structureOnly) definition.put("declaredFields", ElementFilter.fieldsIn(type.getEnclosedElements()).stream().limit(30)
+                            .map(field -> (field.getModifiers().isEmpty() ? "" : String.join(" ", field.getModifiers().stream().map(Modifier::toString).toList()) + " ")
+                                + field.asType().toString() + " " + field.getSimpleName()).toList());
+                        typeDefinitions.put(id, definition);
                     }
                 }
                 return super.visitClass(tree, context);

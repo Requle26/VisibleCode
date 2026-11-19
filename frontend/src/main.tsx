@@ -65,6 +65,7 @@ function App() {
   const steps = trace?.snapshots ?? [];
   const current = steps[step];
   const ready = !!current && !busy && !isDirty;
+  const structureOnly = ready && current.structureOnly;
   const isLast = step === steps.length - 1;
   const diagnostic = !isDirty ? trace?.diagnostics?.[0] : undefined;
   const insight = describe(current, steps[step - 1]);
@@ -168,7 +169,7 @@ function App() {
     <nav className="language-switch" aria-label="언어 선택">
       {Object.entries(languages).map(([id, item]) => <a key={id} href={item.path} aria-current={id === language ? 'page' : undefined}>{item.name}</a>)}
     </nav>
-    {ready && <div className="transport" role="group" aria-label="실행 타임라인">
+    {ready && !structureOnly && <div className="transport" role="group" aria-label="실행 타임라인">
       <div className="player-buttons">
         <button className="icon-button" type="button" title="첫 단계" aria-label="첫 단계" onClick={() => go(0)} disabled={step === 0}><SkipBack size={13} /></button>
         <button className="icon-button" type="button" title="이전 단계" aria-label="이전 단계" onClick={() => go(step - 1)} disabled={step === 0}><ChevronLeft size={17} /></button>
@@ -206,10 +207,14 @@ function App() {
       <section className="canvas" aria-label="메모리 맵" aria-busy={busy}>
         <MemoryView key={traceCode} language={language} theme={theme} toggleTheme={toggleTheme} editorHidden={editorHidden} toggleEditor={toggleEditor} snapshot={ready ? current : undefined} previous={ready ? steps[step - 1] : undefined} focus={selected} setFocus={setSelected} onNodeNavigate={jumpToNode} placeholder={busy ? '실행 단계를 기록하는 중…' : '코드를 실행하면 메모리 맵이 표시돼요.'} />
         {editorHidden && <div className="editor-controls canvas-editor-controls">{editorControls}</div>}
-        {trace?.warning && !isDirty && <div className="trace-notice" role="status"><AlertCircle size={15} /> {trace.warning}</div>}
+        {structureOnly ? <div className="trace-notice structure-notice" role="status">클래스 구조도 · 실행 진입점 없음</div>
+          : trace?.warning && !isDirty && <div className="trace-notice" role="status"><AlertCircle size={15} /> {trace.warning}</div>}
         {focusedClass && <div className="canvas-controls">
           <div className="class-details" role="status">
             <strong>{focusedClass.name} · {typeDefinitionLabel(focusedClass)}</strong>
+            {structureOnly && !!focusedClass.declaredFields?.length && <div className="method-list">
+              {focusedClass.declaredFields.map((field, index) => <code key={index}>{field}</code>)}
+            </div>}
             <div className="method-list">{focusedClass.methods.length ? focusedClass.methods.map((method, index) => <code key={index}>
               {focusedClass.abstractMethods?.includes(method) && <span className="abstract-method-tag">추상</span>}{method}
             </code>) : <span>{focusedClass.external ? '라이브러리 타입' : '메서드 없음'}</span>}</div>

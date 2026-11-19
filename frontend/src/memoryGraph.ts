@@ -7,6 +7,7 @@ export type SnapGlowArea = { side: 'top' | 'right' | 'bottom' | 'left'; from: nu
 export type ConnectionPort = { id: string; side: SnapGlowArea['side']; offset: number; type: 'source' | 'target' };
 export type GraphData = {
   kind: Kind; title: string; value?: GraphField; fields?: GraphField[]; badge?: string; note?: string;
+  declarations?: { text: string; group: 'field' | 'member'; abstract?: boolean }[];
   text?: string; active?: boolean; orphaned?: boolean; leaving?: boolean;
   scope?: Frame['scope']; moduleGlobals?: boolean;
   typeKind?: 'interface' | 'abstract';
@@ -119,11 +120,14 @@ export function buildMemoryGraph(snapshot?: Snapshot, previous?: Snapshot, compa
 
   // Class definitions sit above the runtime graph; keep static-field rows there too.
   const types = hierarchyTypes(snapshot.classes);
+  const structureOnly = snapshot.structureOnly;
+  const definitionWidth = structureOnly ? 300 : classWidth;
   const gap = types.some(type => type.bases?.length) ? 44 : 22;
   let typeBottom = 0;
   const classRows = typeRows(types, compact).map(members => {
     const y = typeBottom;
-    typeBottom += Math.max(...members.map(type => 57 + type.fields.length * 26)) + gap;
+    typeBottom += Math.max(...members.map(type => 57 + 26 * (type.fields.length
+      + (structureOnly ? (type.declaredFields?.length ?? 0) + type.methods.length : 0)))) + gap;
     return { y, members };
   });
   const top = typeBottom ? typeBottom + (compact ? 23 : 50) : 22;
@@ -198,13 +202,17 @@ export function buildMemoryGraph(snapshot?: Snapshot, previous?: Snapshot, compa
       const method = methodsByClass.get(key);
       const instances = objectsByClass.get(key) ?? [];
       const representative = method ?? instances[0];
-      let x = compact ? (index % 2) * variableX : representative?.position.x ?? 0;
-      if (!compact) while (occupiedClassX.some(used => Math.abs(used - x) < classWidth + classGap)) x += classWidth + classGap;
+      let x = compact ? (index % 2) * (structureOnly ? definitionWidth + classGap : variableX) : representative?.position.x ?? 0;
+      if (!compact) while (occupiedClassX.some(used => Math.abs(used - x) < definitionWidth + classGap)) x += definitionWidth + classGap;
       occupiedClassX.push(x);
       const prior = prevClasses.get(key);
-      const node = addNode(classNodeId(clazz), x, y, classWidth, {
+      const node = addNode(classNodeId(clazz), x, y, definitionWidth, {
         kind: 'class', typeKind: clazz.kind === 'interface' ? 'interface' : clazz.abstract ? 'abstract' : undefined,
-        title: clazz.name, note: clazz.external ? '라이브러리 타입' : `메서드 ${clazz.methods.length}개`, fields: fieldsFor(clazz.fields, prior?.fields),
+        title: clazz.name, note: clazz.external ? '라이브러리 타입' : structureOnly ? '타입 선언' : `메서드 ${clazz.methods.length}개`, fields: fieldsFor(clazz.fields, prior?.fields),
+        declarations: structureOnly && !clazz.external ? [
+          ...(clazz.declaredFields ?? []).map(text => ({ text, group: 'field' as const })),
+          ...clazz.methods.map(text => ({ text, group: 'member' as const, abstract: clazz.abstractMethods?.includes(text) })),
+        ] : undefined,
       });
       if (method) addEdge(node.id, method.id, 'out-bottom', 'in-top', 'definition');
       for (const instance of instances) {
@@ -236,6 +244,6 @@ export function buildMemoryGraph(snapshot?: Snapshot, previous?: Snapshot, compa
     if (!node.data.orphaned) node.data.fields?.forEach(addReference);
   }
 
-  const signature = JSON.stringify(nodes.map(n => [n.id, n.position.x, n.position.y, n.data.fields?.length, Boolean(n.data.text), Boolean(n.data.note)]));
+  const signature = JSON.stringify(nodes.map(n => [n.id, n.position.x, n.position.y, n.data.fields?.length, n.data.declarations?.length, Boolean(n.data.text), Boolean(n.data.note)]));
   return { nodes, edges, signature };
 }

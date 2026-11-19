@@ -13,7 +13,8 @@ const alignmentReachPixels = 280;
 
 export function nodeBounds(node: MemoryNode) {
   const header = node.data.kind === 'local' ? 47 : node.data.kind === 'object' ? 41 : 51;
-  const rows = (node.data.fields?.length ?? 0) + Number(node.data.text != null) + Number(node.data.kind === 'object' && Boolean(node.data.note));
+  const rows = (node.data.fields?.length ?? 0) + (node.data.declarations?.length ?? 0)
+    + Number(node.data.text != null) + Number(node.data.kind === 'object' && Boolean(node.data.note));
   return { ...node.position, header, width: node.measured?.width || Number(node.style?.width ?? 174),
     height: node.measured?.height || header + 26 * rows };
 }

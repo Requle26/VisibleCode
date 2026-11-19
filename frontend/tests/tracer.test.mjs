@@ -504,6 +504,62 @@ test('같은 힙 객체에 들어오는 참조와 인스턴스 선은 같은 면
   }
 });
 
+test('Main 없는 C# 제네릭 추상 클래스는 필드와 멤버를 실행 없이 표시한다', { skip: !csharpAvailable }, async () => {
+  const code = `public abstract class BaseState<Contorller> {
+    protected Contorller contorller;
+    protected BaseState(Contorller contorller) { this.contorller = contorller; }
+    public virtual void EnterState() { }
+    public virtual void UpdateState() { }
+    public virtual void FixedUpdateState() { }
+    public virtual void ExitState() { }
+}
+public class PlayState : BaseState<int> {
+    static PlayState() { throw new System.Exception("do not execute"); }
+    public PlayState(int value) : base(value) { }
+}`;
+  const result = await execute(code, 'csharp');
+  assert.equal(result.error, undefined);
+  assert.equal(result.runtimeError, undefined);
+  assert.equal(result.snapshots.length, 1);
+  const [state] = result.snapshots;
+  assert.equal(state.structureOnly, true);
+  assert.deepEqual(state.frames, []);
+  assert.deepEqual(state.heap, []);
+  const base = state.classes.find(type => type.name === 'BaseState<Contorller>');
+  assert.ok(base?.abstract);
+  assert.deepEqual(base.declaredFields, ['protected Contorller contorller']);
+  assert.ok(base.methods.includes('protected BaseState(Contorller contorller)'));
+  for (const method of ['EnterState', 'UpdateState', 'FixedUpdateState', 'ExitState']) {
+    assert.ok(base.methods.includes(`public virtual void ${method}()`));
+  }
+  const vite = await createViteServer({ configFile: false, server: { middlewareMode: true, hmr: false } });
+  try {
+    const { buildMemoryGraph } = await vite.ssrLoadModule('/src/memoryGraph.ts');
+    const graph = buildMemoryGraph(state);
+    assert.ok(graph.nodes.every(node => node.data.kind === 'class'));
+    assert.deepEqual(graph.nodes.find(n => n.data.title === base.name).data.declarations.map(d => d.text), [...base.declaredFields, ...base.methods]);
+    assert.deepEqual(graph.edges.map(e => e.label), ['상속']);
+  } finally { await vite.close(); }
+});
+
+test('main 없는 Java 타입은 선언과 구현 관계를 보여주고 문법 오류는 보고한다', async () => {
+  const result = await execute(`interface State { void enter(); }
+public abstract class BaseState<T> implements State {
+    protected T controller;
+    protected BaseState(T controller) { this.controller = controller; }
+}`);
+  const [state] = result.snapshots ?? [];
+  assert.equal(state?.structureOnly, true, result.error);
+  assert.deepEqual(state.frames, []);
+  const base = state.classes.find(type => type.name === 'BaseState<T>');
+  assert.deepEqual(base?.declaredFields, ['protected T controller']);
+  assert.ok(base.methods.includes('BaseState(T)'));
+  assert.equal(base.bases[0].id, 'State');
+  const invalid = await execute('public class Broken { int field = ; }');
+  assert.ok(invalid.diagnostics?.length);
+  assert.equal(invalid.snapshots, undefined);
+});
+
 test('같은 인터페이스를 구현해도 각 클래스가 자기 연결선을 가진다', async () => {
   const vite = await createViteServer({ configFile: false, server: { middlewareMode: true, hmr: false } });
   try {

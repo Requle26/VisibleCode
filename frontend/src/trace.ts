@@ -4,11 +4,11 @@ export type Frame = { id: string; name: string; className: string; classId?: str
 export type HeapObject = { id: string; type: string; classId?: string; kind: 'object' | 'string' | 'array' | 'scalar'; fields: Variable[]; text: string | null; length: number; truncated: boolean; reachable: boolean };
 export type TypeBase = { id: string; name: string; kind: 'class' | 'interface' };
 export type ClassInfo = { id?: string; name: string; fields: Variable[]; methods: string[];
-  kind?: TypeBase['kind']; abstract?: boolean; abstractMethods?: string[]; bases?: TypeBase[]; external?: boolean };
+  declaredFields?: string[]; kind?: TypeBase['kind']; abstract?: boolean; abstractMethods?: string[]; bases?: TypeBase[]; external?: boolean };
 export function typeDefinitionLabel(type: ClassInfo) {
   return type.kind === 'interface' ? '인터페이스' : type.abstract ? '추상 클래스' : '클래스 영역';
 }
-export type Snapshot = { line: number; executedLine: number; frames: Frame[]; heap: HeapObject[]; globalsRef?: string; classes: ClassInfo[]; output: string; stderr?: string; finished: boolean };
+export type Snapshot = { line: number; executedLine: number; frames: Frame[]; heap: HeapObject[]; globalsRef?: string; classes: ClassInfo[]; output: string; stderr?: string; finished: boolean; structureOnly?: boolean };
 export type Trace = { snapshots?: Snapshot[]; output?: string; stderr?: string; error?: string; runtimeError?: string | null; runtimeErrorLine?: number; warning?: string; diagnostics?: { line: number; message: string }[]; mainClass?: string };
 export const valueChanged = (value: Variable, before?: Variable[]) => value.value.display !== before?.find(v => v.name === value.name)?.value.display;
 
