@@ -2,7 +2,7 @@ import express from 'express';
 import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -18,11 +18,12 @@ const localDotnet = [runtime, path.join(root, '..', '.runtime')].map(dir => path
 const dotnet = process.env.DOTNET_BIN || localDotnet || dotnetName;
 const dotnetEnv = { ...process.env, DOTNET_NOLOGO: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' };
 const python = process.env.PYTHON_BIN || 'python3';
-const names = { java: 'Java', csharp: 'C#', python: 'Python' };
-const requirements = { java: 'JDK 17 이상(java, javac)', csharp: '.NET SDK 8 이상(dotnet)', python: 'Python 3.9 이상(python3)' };
+const names = { java: 'Java', csharp: 'C#', python: 'Python', rust: 'Rust' };
+const requirements = { java: 'JDK 17 이상(java, javac)', csharp: '.NET SDK 8 이상(dotnet)', python: 'Python 3.9 이상(python3)', rust: 'rustc와 Python 스크립팅을 지원하는 LLDB' };
+const sourceNames = { java: 'source.txt', csharp: 'Program.cs', python: 'main.py', rust: 'main.rs' };
 
 function prepare(language) {
-  if (language === 'python') return Promise.resolve();
+  if (language === 'python' || language === 'rust') return Promise.resolve();
   if (built.has(language)) return built.get(language);
   const job = (async () => {
     if (language === 'java') {
@@ -41,19 +42,25 @@ function prepare(language) {
 }
 
 function command(language, dir, source) {
+  if (language === 'rust') return [process.execPath, [path.join(root, 'server/rust/runner.mjs')], process.env];
   if (language === 'python') return [python, ['-I', path.join(root, 'server/python/tracer.py'), source], process.env];
   if (language === 'csharp') return [dotnet, [path.join(runtime, 'csharp/Tracer.dll'), source], dotnetEnv];
   return ['java', ['-Xmx192m', '--add-modules', 'jdk.jdi', '-cp', runtime, 'MemoryTracer', dir], process.env];
 }
 
-const app = express();
-const server = createServer(app);
+export const app = express();
+export const server = createServer(app);
+const standalone = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 // The API executes the submitted code with the current user's local permissions.
 // Accept browser requests only from the directly served loopback origin.
 app.use((req, res, next) => {
   const host = req.get('host') || '';
   const origin = req.get('origin');
-  const allowedOrigins = new Set([`http://${host}`, 'http://localhost:5173', 'http://127.0.0.1:5173']);
+  const allowedOrigins = new Set([`http://${host}`]);
+  if (standalone) {
+    allowedOrigins.add('http://localhost:5173');
+    allowedOrigins.add('http://127.0.0.1:5173');
+  }
   if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host) || (origin && !allowedOrigins.has(origin))) {
     return res.status(403).json({ error: '로컬 Memory Studio에서만 실행할 수 있어요.' });
   }
@@ -64,7 +71,7 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok', engine: 'JVM / JD
 let active = 0;
 app.post('/api/trace', async (req, res) => {
   const { code, language = 'java' } = req.body ?? {};
-  if (typeof language !== 'string' || !Object.hasOwn(names, language)) return res.status(400).json({ error: '지원하는 언어는 Java, C#, Python입니다.' });
+  if (typeof language !== 'string' || !Object.hasOwn(names, language)) return res.status(400).json({ error: `지원 언어: ${Object.values(names).join(', ')}` });
   if (typeof code !== 'string' || code.length > 40000) return res.status(400).json({ error: '40,000자 이하의 코드를 입력해 주세요.' });
   if (active >= 3) return res.status(429).json({ error: '이전 실행을 정리하고 있습니다. 잠시 후 다시 실행해 주세요.' });
   active++;
@@ -75,7 +82,7 @@ app.post('/api/trace', async (req, res) => {
     await prepare(language);
     if (res.destroyed) return;
     dir = await mkdtemp(path.join(os.tmpdir(), 'memory-studio-'));
-    const source = path.join(dir, language === 'python' ? 'main.py' : language === 'csharp' ? 'Program.cs' : 'source.txt');
+    const source = path.join(dir, sourceNames[language]);
     await writeFile(source, code);
     if (res.destroyed) return;
     const [bin, args, env] = command(language, dir, source);
@@ -112,5 +119,8 @@ app.use('/api', (error, _req, res, _next) => {
   res.status(error.status === 413 ? 413 : 400).json({ error: error.status === 413 ? '코드가 너무 길어요. 짧은 예제로 다시 실행해 주세요.' : '코드를 읽을 수 없어요.' });
 });
 
-const port = Number(process.env.PORT || 8787);
-server.listen(port, '127.0.0.1', () => console.log(`Memory Studio → http://localhost:${server.address().port}`));
+export function listen(port) {
+  return server.listen(port, '127.0.0.1', () => console.log(`Memory Studio → http://localhost:${server.address().port}`));
+}
+
+if (standalone) listen(Number(process.env.PORT ?? 8787));

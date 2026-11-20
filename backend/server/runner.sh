@@ -31,6 +31,13 @@ case "${1:-}" in
     cp "$input" main.py
     set -- python3 -I /opt/visiblecode/tracer.py "$PWD/main.py"
     ;;
+  rust)
+    # Include space for the compiled binary and its debug information.
+    ulimit -f 131072
+    cp "$input" main.rs
+    export RUSTC_BIN=/usr/local/bin/codevis-rustc LLDB_BIN=/usr/bin/lldb-19
+    set -- /usr/bin/node /opt/visiblecode/rust/runner.mjs
+    ;;
   *) exit 64 ;;
 esac
 

@@ -35,14 +35,15 @@ function port(box: Box, side: Side, row?: number, incoming = false): Point {
 function acrossOf(side: Side) { return axisOf(side) === 'x' ? 'y' : 'x'; }
 
 function splitPorts(links: RoutedLink[]) {
-  const groups = new Map<string, { nodeId: string; box: Box; side: Side; type: ConnectionPort['type']; slots: Map<string, RoutedLink[]> }>();
+  const groups = new Map<string, { nodeId: string; box: Box; side: Side; slots: Map<string, { type: ConnectionPort['type']; kind: string; links: RoutedLink[] }> }>();
   const add = (type: ConnectionPort['type'], nodeId: string, box: Box, side: Side, slotKey: string, link: RoutedLink) => {
-    const key = JSON.stringify([type, nodeId, side]);
+    const key = JSON.stringify([nodeId, side]);
     let group = groups.get(key);
-    if (!group) groups.set(key, group = { nodeId, box, side, type, slots: new Map() });
-    const entries = group.slots.get(slotKey);
-    if (entries) entries.push(link);
-    else group.slots.set(slotKey, [link]);
+    if (!group) groups.set(key, group = { nodeId, box, side, slots: new Map() });
+    const slot = JSON.stringify([type, slotKey]);
+    const entry = group.slots.get(slot);
+    if (entry) entry.links.push(link);
+    else group.slots.set(slot, { type, kind: slotKey, links: [link] });
   };
   for (const link of links) {
     const { edge, source, target, draft } = link;
@@ -54,29 +55,30 @@ function splitPorts(links: RoutedLink[]) {
   const departures = new Map<string, ConnectionPort>();
   const arrivals = new Map<string, ConnectionPort>();
   const connectionPorts = new Map<string, ConnectionPort[]>();
-  for (const { nodeId, box, side, type, slots } of groups.values()) {
+  for (const { nodeId, box, side, slots } of groups.values()) {
     if (slots.size < 2) continue;
-    const incoming = type === 'target';
     const across = acrossOf(side), size = across === 'x' ? 'width' : 'height';
     const span = box[size], inset = Math.min(cornerInset, span / 4);
     const gap = Math.min(portGap, (span - 2 * inset) / (slots.size - 1));
     const half = (slots.size - 1) * gap / 2;
-    const base = port(box, side, undefined, incoming)[across] - box[across];
+    const base = port(box, side, undefined, [...slots.values()].some(slot => slot.type === 'target'))[across] - box[across];
     const first = Math.min(span - inset - 2 * half, Math.max(inset, base - half));
-    const ordered = [...slots].map(([key, links]) => ({ key, links, center: links.reduce((sum, link) => {
-      const other = incoming ? link.source : link.target;
+    const ordered = [...slots].map(([key, slot]) => ({ ...slot, key, center: slot.links.reduce((sum, link) => {
+      const other = slot.type === 'target' ? link.source : link.target;
       return sum + other[across] + other[size] / 2;
-    }, 0) / links.length })).sort((a, b) => a.center - b.center || a.key.localeCompare(b.key));
+    }, 0) / slot.links.length })).sort((a, b) => a.center - b.center || a.key.localeCompare(b.key));
     // Keep the visible reference dot at the standard port; fit other kinds around it.
-    const reference = incoming ? ordered.findIndex(({ key }) => key === 'reference') : -1;
+    const reference = ordered.findIndex(({ type, kind }) => type === 'target' && kind === 'reference');
     const beforeGap = reference > 0 ? Math.min(portGap, (base - inset) / reference) : portGap;
     const after = ordered.length - reference - 1;
     const afterGap = after > 0 ? Math.min(portGap, (span - inset - base) / after) : portGap;
     const handles = connectionPorts.get(nodeId) ?? [];
-    ordered.forEach(({ key, links }, i) => {
+    ordered.forEach(({ type, kind, links }, i) => {
       if (i === reference) return;
-      const offset = reference < 0 ? first + i * gap - base : (i - reference) * (i < reference ? beforeGap : afterGap);
-      const slot = { id: incoming ? `in-${side}-kind-${key}` : `out-${side}-slot-${i}`, side, type, offset };
+      const incoming = type === 'target';
+      const natural = port(box, side, undefined, incoming)[across] - box[across];
+      const coordinate = reference < 0 ? first + i * gap : base + (i - reference) * (i < reference ? beforeGap : afterGap);
+      const slot = { id: incoming ? `in-${side}-kind-${kind}` : `out-${side}-slot-${i}`, side, type, offset: coordinate - natural };
       handles.push(slot);
       for (const { edge } of links) (incoming ? arrivals : departures).set(edge.id, slot);
     });

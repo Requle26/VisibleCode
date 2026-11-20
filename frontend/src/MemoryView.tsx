@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { Braces, Box, Focus, GitFork, Layers, Minus, Moon, Network, PanelLeftClose, PanelLeftOpen, Plus, Sun } from 'lucide-react';
 import {
   Background, BackgroundVariant, BaseEdge, Handle, MarkerType, Panel, Position, ReactFlow, ReactFlowProvider, SelectionMode, ViewportPortal,
@@ -29,6 +29,9 @@ const regions = {
   pythonFrame: { label: '호출 스택', description: '함수가 실행되는 동안의 프레임이에요. 파이썬의 호출 관계를 보여줘요.' },
   pythonLocal: { label: '스택 프레임', description: '함수의 실행 프레임에 지역 이름의 객체 참조가 있어요. 물리적인 스택 주소를 나타내지는 않아요.' },
   pythonObject: { label: '힙 객체', description: '이름이 가리키는 파이썬 객체예요. 카드의 ID는 같은 객체인지 구별하는 표시예요.' },
+  rustFrame: { label: '호출 스택', description: 'Rust 함수가 실행되는 동안의 호출 프레임' },
+  rustLocal: { label: '지역 변수', description: '디버거가 읽은 값이에요. Rust의 소유권 이동이나 빌림이 끝난 시점은 표시하지 않아요.' },
+  referent: { label: '참조 대상', description: '참조가 가리키는 값이에요. 스택 또는 힙의 위치를 나타내지는 않아요.' },
   classBody: { label: '클래스 본문', description: 'Python 클래스가 정의되는 동안 사용하는 이름 공간' },
 };
 const layoutFit = { padding: 0.15, minZoom: 0.15, maxZoom: 1.12 };
@@ -74,7 +77,8 @@ function Value({ field, choose }: { field: GraphField; choose?: (id: string) => 
 }
 
 function MemoryCard({ id, data }: NodeProps<MemoryNode>) {
-  const python = useContext(MemoryLanguage) === 'python';
+  const language = useContext(MemoryLanguage);
+  const python = language === 'python';
   const updateNodeInternals = useUpdateNodeInternals();
   const portLayout = JSON.stringify(data.connectionPorts);
   const previousLayout = useRef(portLayout);
@@ -86,7 +90,8 @@ function MemoryCard({ id, data }: NodeProps<MemoryNode>) {
   }, [id, portLayout, updateNodeInternals]);
   const Icon = data.typeKind === 'interface' ? Network : icons[data.kind];
   const kind = data.kind;
-  const region = regions[data.moduleGlobals ? 'globals' : data.scope === 'module' ? (kind === 'frame' ? 'moduleFrame' : 'module')
+  const region = regions[data.referent ? 'referent' : language === 'rust' && kind === 'frame' ? 'rustFrame'
+    : language === 'rust' && kind === 'local' ? 'rustLocal' : data.moduleGlobals ? 'globals' : data.scope === 'module' ? (kind === 'frame' ? 'moduleFrame' : 'module')
     : data.scope === 'class' ? 'classBody' : python && kind === 'frame' ? 'pythonFrame'
       : python && kind === 'local' ? 'pythonLocal' : python && kind === 'object' ? 'pythonObject' : data.typeKind ?? kind];
   const port = (handle: string) => data.referencePorts?.has(handle) ? 'port' : '';
@@ -138,14 +143,28 @@ function MemoryCard({ id, data }: NodeProps<MemoryNode>) {
 
 const nodeTypes = { memory: MemoryCard };
 function RoutedEdge(props: EdgeProps<MemoryEdge>) {
-  const path = routedPath({ x: props.sourceX, y: props.sourceY }, props.sourcePosition,
-    { x: props.targetX, y: props.targetY }, props.targetPosition, props.data?.lane, props.data?.curved);
-  if (props.data?.kind !== 'reference') {
-    return <BaseEdge id={props.id} path={path} style={props.style} markerEnd={props.markerEnd} interactionWidth={props.interactionWidth} />;
-  }
+  const maskId = useId();
+  const endpoint = (x: number, y: number, side: Position, offset = 0) => side === Position.Top || side === Position.Bottom
+    ? { x: x + offset, y } : { x, y: y + offset };
+  const start = endpoint(props.sourceX, props.sourceY, props.sourcePosition, props.data?.sourceOffset);
+  const end = endpoint(props.targetX, props.targetY, props.targetPosition, props.data?.targetOffset);
+  const lane = props.data?.lane;
+  const path = routedPath(start, props.sourcePosition, end, props.targetPosition, lane, props.data?.curved);
+  const left = Math.min(start.x, end.x, lane?.axis === 'x' ? lane.coordinate : start.x) - 32;
+  const top = Math.min(start.y, end.y, lane?.axis === 'y' ? lane.coordinate : start.y) - 32;
+  const right = Math.max(start.x, end.x, lane?.axis === 'x' ? lane.coordinate : end.x) + 32;
+  const bottom = Math.max(start.y, end.y, lane?.axis === 'y' ? lane.coordinate : end.y) + 32;
+  const maskBounds = { x: left, y: top, width: right - left, height: bottom - top };
+  const reference = props.data?.kind === 'reference';
+  const style = { ...props.style, '--edge-label-mask': `url(#${maskId})` } as React.CSSProperties;
   return <>
-    <BaseEdge id={props.id} path={path} pathLength={1} style={props.style} interactionWidth={props.interactionWidth} />
-    <path className="reference-tip" d={path} fill="none" stroke="transparent" strokeWidth={props.style?.strokeWidth} markerEnd={props.markerEnd} pointerEvents="none" />
+    <defs><mask id={maskId} maskUnits="userSpaceOnUse" {...maskBounds}>
+      <rect {...maskBounds} fill="white" />
+      <g data-label-gap="" />
+    </mask></defs>
+    <BaseEdge id={props.id} path={path} pathLength={reference ? 1 : undefined} style={style}
+      markerEnd={reference ? undefined : props.markerEnd} interactionWidth={props.interactionWidth} />
+    {reference && <path className="reference-tip" d={path} fill="none" stroke="transparent" strokeWidth={props.style?.strokeWidth} markerEnd={props.markerEnd} pointerEvents="none" />}
   </>;
 }
 const edgeTypes = { routed: RoutedEdge };
@@ -236,8 +255,13 @@ function Graph({ snapshot, previous, focus, setFocus, onNodeNavigate, placeholde
   const routing = useMemo(() => routeEdges(graph.edges, geometry), [graph.edges, geometry]);
   const paths = useMemo(() => edges.map(edge => {
     const route = routing.routes.get(edge.id);
-    return { ...edge, label: undefined, selectable: false, sourceHandle: route?.sourceHandle ?? edge.sourceHandle,
-      targetHandle: route?.targetHandle ?? edge.targetHandle, data: edge.data && { ...edge.data, lane: route?.lane, curved: route?.curved } };
+    const source = routing.connectionPorts.get(edge.source)?.find(port => port.id === route?.sourceHandle);
+    const target = routing.connectionPorts.get(edge.target)?.find(port => port.id === route?.targetHandle);
+    // Resolve the visible slot from an always-present handle. React Flow measures
+    // new handles asynchronously, so binding edges to them can blank a frame.
+    return { ...edge, label: undefined, selectable: false, sourceHandle: source ? `out-${source.side}` : route?.sourceHandle ?? edge.sourceHandle,
+      targetHandle: target ? `in-${target.side}` : route?.targetHandle ?? edge.targetHandle,
+      data: edge.data && { ...edge.data, lane: route?.lane, curved: route?.curved, sourceOffset: source?.offset, targetOffset: target?.offset } };
   }), [edges, routing]);
   const nodes = useMemo(() => geometry.map(node => {
     const focused = activeFocus === node.id;
@@ -422,7 +446,7 @@ function Graph({ snapshot, previous, focus, setFocus, onNodeNavigate, placeholde
       nodesConnectable={false} nodesFocusable={false} edgesFocusable={false} deleteKeyCode={null} zoomOnScroll={false} zoomActivationKeyCode={null}
       minZoom={0.15} maxZoom={2.5} zoomOnDoubleClick={false} proOptions={{ hideAttribution: true }}>
       <Background variant={BackgroundVariant.Lines} gap={24} lineWidth={1} color="var(--grid-line)" />
-      <EdgeLabels canvas={canvas} edges={edges} />
+      <EdgeLabels canvas={canvas} edges={edges} dragging={geometry.some(node => node.dragging)} />
       {nodes.length > 0 && guides?.length ? <ViewportPortal>
         <svg className="node-alignment-guides" width="1" height="1" aria-hidden="true">
           {guides.map(({ axis, coordinate, from, to }) => <line key={axis}

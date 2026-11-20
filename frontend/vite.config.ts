@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
+  if (mode === 'local-dev') return { build: { chunkSizeWarningLimit: 800 } };
   const env = loadEnv(mode, process.cwd(), '');
   const target = env.TRACE_BACKEND_URL || 'http://127.0.0.1:8787';
   return {

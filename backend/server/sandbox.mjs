@@ -1,7 +1,7 @@
 import { CommandExitError, Sandbox } from 'e2b';
 
 const maxResultBytes = 16 * 1024 * 1024;
-const languages = new Set(['java', 'csharp', 'python']);
+const languages = new Set(['java', 'csharp', 'python', 'rust']);
 
 export class TraceError extends Error {
   constructor(status, message) {
@@ -12,7 +12,7 @@ export class TraceError extends Error {
 
 export function parseTraceRequest(body) {
   const { code, language = 'java' } = body ?? {};
-  if (!languages.has(language)) throw new TraceError(400, '지원하는 언어는 Java, C#, Python입니다.');
+  if (!languages.has(language)) throw new TraceError(400, '지원하는 언어는 Java, C#, Python, Rust입니다.');
   if (typeof code !== 'string' || !code.trim() || code.length > 40000) {
     throw new TraceError(400, '40,000자 이하의 코드를 입력해 주세요.');
   }

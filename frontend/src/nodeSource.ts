@@ -19,9 +19,10 @@ function ancestor(node: SyntaxNode, names: string[]): SyntaxNode | null {
 }
 
 export function indexSource(code: string, language: Language) {
-  const root = parsers[language].parse(code).topNode;
   const types: { name: string; line: number }[] = [];
   const variables: Definition[] = [];
+  if (language === 'rust') return { types, variables }; // rustc supplies declaration lines through LLDB.
+  const root = parsers[language].parse(code).topNode;
   const starts = [0];
   for (let i = 0; i < code.length; i++) if (code[i] === '\n') starts.push(i + 1);
   const lineAt = (position: number) => {
@@ -137,6 +138,7 @@ export function nodeSource(index: ReturnType<typeof indexSource>, snapshots: Sna
     for (const frame of snapshot.frames) {
       const variable = frame.variables.find(item => `local:${frame.id}:${item.name}` === nodeId);
       if (!variable) continue;
+      if (valid(variable.sourceLine)) return result(variable.sourceLine, '변수 선언');
       const present = (state: Snapshot) => state.frames.find(item => item.id === frame.id && item.variables.some(v => v.name === variable.name));
       let introduced = step;
       while (introduced > 0 && present(snapshots[introduced - 1])) introduced--;

@@ -13,7 +13,8 @@ import { describe, sourceLineMarks, typeDefinitionLabel, type Trace } from './tr
 import { useTheme } from './theme';
 import './styles.css';
 
-const language: Language = window.location.pathname.startsWith('/csharp') ? 'csharp' : window.location.pathname.startsWith('/python') ? 'python' : 'java';
+const path = window.location.pathname.replace(/\/+$/, '') || '/';
+const language = (Object.keys(languages) as Language[]).find(id => languages[id].path === path) ?? 'java';
 const currentLanguage = languages[language];
 const draftKey = `memory-studio:draft:${language}`;
 const editorWidthKey = 'memory-studio:editor-width';
@@ -68,7 +69,7 @@ function App() {
   const structureOnly = ready && current.structureOnly;
   const isLast = step === steps.length - 1;
   const diagnostic = !isDirty ? trace?.diagnostics?.[0] : undefined;
-  const insight = describe(current, steps[step - 1]);
+  const insight = describe(current, steps[step - 1], language);
   const error = !isDirty ? trace?.error : undefined;
   const runtimeError = !isDirty && (isLast || !steps.length) ? trace?.runtimeError : undefined;
   const focusedClass = ready && selected ? hierarchyTypes(current.classes).find(clazz => classNodeId(clazz) === selected) : undefined;
@@ -114,6 +115,7 @@ function App() {
     if (controller.signal.aborted) return;
     const shared = preview ? result.snapshots?.findIndex(s => {
       const values = s.frames[0]?.variables;
+      if (language === 'rust') return Boolean(values?.find(v => v.name === 'borrowed')?.value.ref);
       const alice = values?.find(v => v.name === 'alice')?.value.ref;
       const friend = values?.find(v => v.name === 'friend')?.value.ref;
       return Boolean(alice && alice === friend);

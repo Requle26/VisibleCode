@@ -10,6 +10,7 @@ export type GraphData = {
   declarations?: { text: string; group: 'field' | 'member'; abstract?: boolean }[];
   text?: string; active?: boolean; orphaned?: boolean; leaving?: boolean;
   scope?: Frame['scope']; moduleGlobals?: boolean;
+  referent?: boolean;
   typeKind?: 'interface' | 'abstract';
   focused?: boolean; linked?: boolean; subdued?: boolean; choose?: (id: string) => void;
   referencePorts?: ReadonlySet<string>;
@@ -18,7 +19,7 @@ export type GraphData = {
 };
 export type MemoryNode = Node<GraphData, 'memory'>;
 export type EdgeLane = { axis: 'x' | 'y'; coordinate: number };
-export type MemoryEdge = Edge<{ kind: 'branch' | 'call' | 'definition' | 'reference' | 'inheritance' | 'implementation'; fieldIndex?: number; lane?: EdgeLane; curved?: boolean }>;
+export type MemoryEdge = Edge<{ kind: 'branch' | 'call' | 'definition' | 'reference' | 'inheritance' | 'implementation'; fieldIndex?: number; lane?: EdgeLane; curved?: boolean; sourceOffset?: number; targetOffset?: number }>;
 
 export const objectNodeId = (id: string) => `object:${id}`;
 const classKey = (clazz: ClassInfo) => clazz.id ?? clazz.name;
@@ -182,7 +183,7 @@ export function buildMemoryGraph(snapshot?: Snapshot, previous?: Snapshot, compa
     const note = object.truncated ? `전체 ${object.length}개 · 일부 표시` : !object.reachable ? '표시된 참조 없음' : object.kind === 'array' && !object.fields.length ? '빈 컬렉션' : undefined;
     const node = addNode(objectNodeId(object.id), compact ? lane * variableX : (globalsOnly ? heapGap : heapStart) + lane * heapGap, lanes[lane], heapWidth, {
       kind: 'object', title: object.type, badge: `@${object.id}`, fields: fieldsFor(object.fields, before?.fields), orphaned: !object.reachable,
-      note, text,
+      note, text, referent: object.region === 'referent',
     });
     lanes[lane] += 41 + 26 * (object.fields.length + Number(Boolean(text)) + Number(Boolean(note))) + 46;
     const key = object.classId ?? object.type;

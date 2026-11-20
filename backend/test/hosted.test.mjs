@@ -121,3 +121,25 @@ test('실행마다 네트워크를 차단한 샌드박스를 생성하고 잘못
   await assert.rejects(() => run(example, signal), { status: 422, message: /결과가 너무 길어요/ });
   assert.deepEqual(cleaned, [1, 2, 3]);
 });
+
+test('배포 프록시에서 받은 Rust 코드를 샌드박스에서 실행하고 추적 결과를 반환한다', async t => {
+  const input = { code: 'fn main() { println!("42"); }', language: 'rust' };
+  const output = { snapshots: [{ finished: true }], output: '42\n' };
+  let cleaned = false;
+  const runTrace = createSandboxRunner({ template: 'test-runner', create: async () => ({
+    files: {
+      write: async (file, code) => {
+        assert.equal(file, '/home/visiblecode/source');
+        assert.equal(code, input.code);
+      },
+      read: async () => new Response(JSON.stringify(output)).body,
+    },
+    commands: { run: async command => assert.match(command, /runner\.sh rust 16777216$/) },
+    kill: async () => { cleaned = true; },
+  }) });
+  const base = await listen(t, createHostedApp({ token, runTrace }));
+  const response = await proxyTrace(req({}, JSON.stringify(input)), env, (url, options) => fetch(`${base}${url.pathname}`, options));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await new Response(response.body).json(), output);
+  assert.equal(cleaned, true);
+});

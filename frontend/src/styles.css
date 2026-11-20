@@ -185,10 +185,10 @@ button.node-value.reference:hover { background: light-dark(#e5d8f9, #4b3768); }
 .node-field .react-flow__handle { left: auto; right: -1px; }
 .node-field .react-flow__handle-left { right: auto; left: -1px; }
 .graph-edge .react-flow__edge-path, .graph-edge .reference-tip { transition: opacity .18s, stroke-width .18s; }
-.map-edge-label-group { color: var(--muted); pointer-events: none; transition: opacity var(--motion-quick), color var(--motion-quick); }
+.map-edge-label-group { position: absolute; top: 0; left: 0; color: var(--muted); pointer-events: none; transition: opacity var(--motion-quick), color var(--motion-quick); }
+.graph-edge:has(.map-edge-label-cutout) .react-flow__edge-path { mask: var(--edge-label-mask); }
 .map-edge-label-group.reference { color: var(--violet); }
-.map-edge-label { position: absolute; transform: translate(-50%, -50%); background: var(--panel-bg); border-radius: 4px; padding: 1px 0; font: 600 11px/14px system-ui, sans-serif; text-align: center; white-space: nowrap; }
-.map-edge-label.inline { background: var(--canvas-bg); }
+.map-edge-label { position: absolute; top: 0; left: 0; transform: translate(-50%, -50%); text-shadow: 0 0 2px var(--canvas-bg); padding: 1px 0; font: 600 11px/14px system-ui, sans-serif; text-align: center; white-space: nowrap; }
 .map-edge-label-leader { position: absolute; background: currentColor; opacity: .35; }
 .graph-edge.definition .react-flow__edge-path { stroke-dasharray: 3 4; }
 .graph-edge.implementation .react-flow__edge-path { stroke-dasharray: 6 4; }

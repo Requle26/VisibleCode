@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
@@ -153,9 +154,133 @@ class Main {
 });
 
 const pythonAvailable = spawnSync(process.env.PYTHON_BIN || 'python3', ['--version']).status === 0;
+const rustCompilerAvailable = spawnSync(process.env.RUSTC_BIN || 'rustc', ['--version']).status === 0;
+const rustDebugger = spawnSync(process.env.LLDB_BIN || 'lldb', ['--no-lldbinit', '--batch', '-o', 'script import lldb; print("CODEVIS_LLDB_OK")'], { encoding: 'utf8', timeout: 5000 });
+const rustAvailable = rustCompilerAvailable && rustDebugger.status === 0 && /^CODEVIS_LLDB_OK\s*$/m.test(rustDebugger.stdout);
 const localDotnet = path.resolve('../.runtime', 'dotnet', process.platform === 'win32' ? 'dotnet.exe' : 'dotnet');
 const sdk = spawnSync(process.env.DOTNET_BIN || (existsSync(localDotnet) ? localDotnet : 'dotnet'), ['--list-sdks'], { encoding: 'utf8' });
 const csharpAvailable = [...(sdk.stdout ?? '').matchAll(/^(\d+)\./gm)].some(([_, version]) => Number(version) >= 8);
+
+test('Rust 예제는 값 복사와 가변 빌림을 기록하고 노드에서 선언으로 이동한다', { skip: !rustAvailable }, async () => {
+  const vite = await createViteServer({ configFile: false, server: { middlewareMode: true, hmr: false } });
+  try {
+    const { languages } = await vite.ssrLoadModule('/src/languages.ts');
+    const { buildMemoryGraph } = await vite.ssrLoadModule('/src/memoryGraph.ts');
+    const { indexSource, nodeSource } = await vite.ssrLoadModule('/src/nodeSource.ts');
+    const code = languages.rust.example;
+    const result = await execute(code, 'rust');
+    assert.equal(result.error, undefined);
+    assert.equal(result.runtimeError, null);
+    const step = result.snapshots.findIndex(s => s.frames[0]?.name === 'add_bonus()');
+    assert.ok(step > 0);
+    const snapshot = result.snapshots[step];
+    const [callee, caller] = snapshot.frames;
+    assert.deepEqual(snapshot.frames.map(frame => frame.name), ['add_bonus()', 'main()']);
+    const borrowed = caller.variables.find(v => v.name === 'borrowed');
+    assert.ok(borrowed?.value.ref);
+    assert.equal(callee.variables.find(v => v.name === 'student').value.ref, borrowed.value.ref);
+    assert.equal(callee.variables.find(v => v.name === 'bonus').value.display, '5');
+    const score = s => s.heap.find(o => o.id === borrowed.value.ref)?.fields.find(v => v.name === 'score')?.value.display;
+    assert.equal(score(snapshot), '90');
+    assert.ok(result.snapshots.slice(step + 1).some(s => score(s) === '95'
+      && s.frames.flatMap(f => f.variables).some(v => v.name === 'before' && v.value.display === '90')));
+    const local = `local:${caller.id}:borrowed`;
+    const graph = buildMemoryGraph(snapshot);
+    assert.ok(graph.nodes.find(n => n.id === `object:${borrowed.value.ref}`)?.data.referent);
+    assert.ok(graph.edges.some(e => e.source === local && e.target === `object:${borrowed.value.ref}`));
+    assert.equal(nodeSource(indexSource(code, 'rust'), result.snapshots, step, local)?.line,
+      code.split('\n').findIndex(line => line.includes('let borrowed')) + 1);
+    assert.equal(result.output, '90 → 95\n');
+    assert.deepEqual(result.snapshots.at(-1).frames, []);
+    assert.equal(result.snapshots.at(-1).finished, true);
+  } finally {
+    await vite.close();
+  }
+});
+
+test('Rust는 컴파일 오류와 panic의 줄 번호를 전달한다', { skip: !rustAvailable }, async () => {
+  const invalid = await execute('fn main() {\n    let x: i32 = "text";\n}', 'rust');
+  assert.equal(invalid.diagnostics[0].line, 2);
+  assert.match(invalid.diagnostics[0].message, /mismatched types/);
+  const panic = await execute('fn main() {\n    println!("start");\n    eprintln!("diagnostic");\n    panic!("test");\n}', 'rust');
+  assert.equal(panic.output, 'start\n');
+  assert.match(panic.stderr, /^diagnostic\n[\s\S]*test/);
+  assert.equal(panic.runtimeErrorLine, 4);
+  assert.ok(panic.snapshots.some(s => !s.finished && s.line === 4 && s.stderr === 'diagnostic\n'));
+});
+
+test('Rust 무한 반복은 기록 한도에서 중단된다', { skip: !rustAvailable }, async () => {
+  const result = await execute('fn main() {\n    for n in 0u64.. {\n        std::hint::black_box(n);\n    }\n}', 'rust');
+  assert.equal(result.error, undefined);
+  assert.match(result.warning, /단계까지만|한도/);
+  assert.ok(result.snapshots.length > 1);
+  assert.equal(result.snapshots.at(-1).finished, false);
+});
+
+const readRustFixture = name => readFile(new URL(`./fixtures/${name}.rs`, import.meta.url), 'utf8');
+
+test('Rust 장부 예제는 구조체, 컬렉션, 열거형 및 재귀 프레임을 추적한다', { skip: !rustAvailable }, async () => {
+  const result = await execute(await readRustFixture('rust-ledger'), 'rust');
+  assert.equal(result.error, undefined);
+  assert.equal(result.runtimeError, null);
+  assert.equal(result.warning, null);
+  assert.equal(result.output, '민아 / 21 / [3, 9]\n');
+  assert.equal(result.stderr, 'checkpoint\n');
+  const recursion = result.snapshots.find(s => s.frames.filter(f => f.name === 'weighted()').length === 3);
+  assert.ok(recursion);
+  const calls = recursion.frames.slice(0, 3);
+  assert.equal(new Set(calls.map(f => f.id)).size, 3);
+  assert.deepEqual(calls.map(f => f.variables.find(v => v.name === 'values').value.display), ['[]', '[9]', '[3, 9]']);
+  assert.equal(recursion.frames.at(-1).variables.find(v => v.name === 'balances').value.display, '[3, 9]');
+  const ledger = result.snapshots.flatMap(s => s.heap).filter(o => o.type === 'Ledger');
+  assert.ok(ledger.some(o => o.fields.find(f => f.name === 'owner')?.value.display === '"민아"'));
+  assert.ok(ledger.some(o => o.fields.find(f => f.name === 'balances')?.value.display === 'BTreeMap(항목 2개)'));
+  const events = new Map();
+  for (const snapshot of result.snapshots) {
+    const frame = snapshot.frames[0];
+    if (frame?.name !== 'Ledger::apply()' || events.has(frame.id)) continue;
+    const ref = frame.variables.find(v => v.name === 'event').value.ref;
+    events.set(frame.id, snapshot.heap.find(o => o.id === ref));
+  }
+  assert.equal(events.size, 3);
+  for (const [index, event] of [...events.values()].entries()) {
+    const variant = ['Credit', 'Transfer', 'Checkpoint'][index];
+    assert.ok(event.type === `Event · ${variant}` || (event.type === 'Event' && event.text === '열거형 미리보기 없음'),
+      `event ${index}: ${event.type} ${event.text}`);
+  }
+});
+
+test('Rust는 매크로와 변수 가리기, 같은 줄의 두 호출, Box 변경을 추적한다', { skip: !rustAvailable }, async () => {
+  const code = await readRustFixture('rust-steps');
+  const result = await execute(code, 'rust');
+  assert.equal(result.error, undefined);
+  assert.equal(result.runtimeError, null);
+  assert.equal(result.output, 'record 25\n3 / 25 / [25, 25]\n');
+  const calls = new Map();
+  for (const [i, snapshot] of result.snapshots.entries()) {
+    const [frame] = snapshot.frames;
+    if (frame?.name === 'square()') calls.set(frame.id, frame.variables.find(v => v.name === 'n').value.display);
+    if (result.snapshots[i - 1]?.frames[0]?.name === 'square()' && frame?.name === 'main()') {
+      assert.equal(snapshot.executedLine, code.split('\n').findIndex(line => line.includes('let mut total')) + 1);
+    }
+  }
+  assert.deepEqual([...calls.values()], ['3', '4']);
+  const expanded = result.snapshots.find(s => s.frames[0]?.variables.some(v => v.name === 'internal'));
+  assert.equal(expanded.frames[0].variables.find(v => v.name === 'base').value.display, '25');
+  const mutated = result.snapshots.find(s => s.heap.some(o => o.fields.length === 2 && o.fields.every(f => f.value.display === '25')));
+  assert.ok(mutated);
+  const locals = new Map(mutated.frames[0].variables.map(v => [v.name, v.value]));
+  assert.equal(locals.get('base').display, '3');
+  assert.equal(locals.get('slice').display, '[3, 25]');
+  assert.ok(locals.get('owned').ref);
+  assert.equal(locals.get('owned').ref, locals.get('shared').ref);
+});
+
+test('Rust는 이동한 값 재사용 시 소유권 오류의 실제 줄을 표시한다', { skip: !rustCompilerAvailable }, async () => {
+  const result = await execute('fn main() {\n    let source = vec![String::from("data")];\n    let _target = source;\n    println!("{}", source.len());\n}', 'rust');
+  assert.equal(result.diagnostics[0].line, 4);
+  assert.match(result.diagnostics[0].message, /borrow of moved value/);
+});
 
 test('C#의 값 복사, 동일 객체 참조, 표현식 본문 메서드와 static 값', { skip: !csharpAvailable }, async () => {
   const result = await execute(`class Box { public int Value; }
@@ -474,6 +599,28 @@ test('한 카드에서 나가는 호출과 지역 변수 선은 도착 카드 �
     };
     order(cards, ['sound', 'dog', 'cat']);
     order([cards[0], cards[1], card('dog', 270, 176), card('cat', 270, 100)], ['sound', 'cat', 'dog']);
+  } finally {
+    await vite.close();
+  }
+});
+
+test('정의 점선과 지역 변수 실선이 같은 노드의 한 면에 겹쳐 붙지 않는다', async () => {
+  const vite = await createViteServer({ configFile: false, server: { middlewareMode: true, hmr: false } });
+  try {
+    const { routeEdges } = await vite.ssrLoadModule('/src/edgeRouting.ts');
+    const card = (id, kind, x, y) => ({ id, position: { x, y }, measured: { width: 148, height: 50 }, data: { kind } });
+    const cards = [card('main', 'frame', 0, 180), card('Main', 'class', 195, 18), card('alice', 'local', 315, 180)];
+    const edges = [
+      { id: 'branch', source: 'main', target: 'alice', sourceHandle: 'out-right', targetHandle: 'in-left', data: { kind: 'branch' } },
+      { id: 'definition', source: 'Main', target: 'main', sourceHandle: 'out-left', targetHandle: 'in-right', data: { kind: 'definition' } },
+    ];
+    const { routes, connectionPorts } = routeEdges(edges, cards);
+    const slots = connectionPorts.get('main');
+    const branch = slots?.find(port => port.id === routes.get('branch').sourceHandle);
+    const definition = slots?.find(port => port.id === routes.get('definition').targetHandle);
+    assert.equal(branch?.side, 'right');
+    assert.equal(definition?.side, 'right');
+    assert.ok(branch.offset - definition.offset >= 8);
   } finally {
     await vite.close();
   }

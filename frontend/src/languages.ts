@@ -44,6 +44,21 @@ def main():
 
 
 main()` },
+  rust: { name: 'Rust', path: '/rust', example: `struct Student {
+    score: i32,
+}
+
+fn add_bonus(student: &mut Student, bonus: i32) {
+    student.score += bonus;
+}
+
+fn main() {
+    let mut alice = Student { score: 90 };
+    let before = alice.score; // i32 값 복사
+    let borrowed = &mut alice; // alice를 가변으로 빌려요.
+    add_bonus(borrowed, 5);
+    println!("{} → {}", before, alice.score); // 90 → 95
+}` },
 } as const;
 
 export type Language = keyof typeof languages;

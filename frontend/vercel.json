@@ -5,6 +5,7 @@
   "functions": { "api/trace.js": { "maxDuration": 30, "supportsCancellation": true } },
   "rewrites": [
     { "source": "/csharp", "destination": "/index.html" },
-    { "source": "/python", "destination": "/index.html" }
+    { "source": "/python", "destination": "/index.html" },
+    { "source": "/rust", "destination": "/index.html" }
   ]
 }

@@ -1,6 +1,6 @@
 const maxRequestBytes = 64 * 1024;
 const maxResponseBytes = 16 * 1024 * 1024;
-const languages = new Set(['java', 'csharp', 'python']);
+const languages = new Set(['java', 'csharp', 'python', 'rust']);
 
 function backendEndpoint(value) {
   try {

@@ -3,6 +3,7 @@ import { Compartment, EditorSelection, EditorState, StateEffect, StateField } fr
 import { Decoration, EditorView, keymap, WidgetType } from '@codemirror/view';
 import { java, javaLanguage } from '@codemirror/lang-java';
 import { python } from '@codemirror/lang-python';
+import { rust } from '@codemirror/lang-rust';
 import { csharp, csharpLanguage } from '@replit/codemirror-lang-csharp';
 import { indentUnit, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { acceptCompletion, CompletionContext, ifNotIn, snippetCompletion, type Completion } from '@codemirror/autocomplete';
@@ -43,11 +44,12 @@ const languageExtensions = {
   java: [java(), javaLanguage.data.of({ autocomplete: completeJava })],
   csharp: [csharp(), csharpLanguage.data.of({ autocomplete: completeCsharp })],
   python: [python()],
+  rust: [rust()],
 };
 
 function expandAbbreviation(view: EditorView, language: Language) {
   const { main, ranges } = view.state.selection;
-  if (!main.empty || ranges.length !== 1 || view.composing || language === 'python') return false;
+  if (!main.empty || ranges.length !== 1 || view.composing || (language !== 'java' && language !== 'csharp')) return false;
   const complete = language === 'java' ? completeJava : completeCsharp;
   const result = complete(new CompletionContext(view.state, main.head, false));
   if (!result || result instanceof Promise) return false;
