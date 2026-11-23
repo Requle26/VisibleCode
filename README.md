@@ -1,6 +1,6 @@
-# Memory Studio
+# Visible Code
 
-Java, C#, Python, Rust 코드를 실행하고 호출 프레임, 객체와 값, 참조 관계를 마인드맵처럼 따라가는 한국어 학습 웹입니다.
+Java, C#, Python, Rust 코드를 실행하고 호출 프레임, 객체와 값, 참조 관계를 마인드맵처럼 따라가는 시각화 웹입니다.
 
 ## 로컬 실행
 
